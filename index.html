@@ -2,97 +2,100 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Gemini Error Resilient Demo</title>
+    <title>EcoScan Dublin - Recycling Assistant</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 700px; margin: 30px auto; padding: 20px; }
-        textarea { width: 100%; height: 80px; margin-bottom: 10px; padding: 10px; box-sizing: border-box; }
-        .btn-group { margin-bottom: 20px; }
-        button { padding: 10px 18px; font-size: 15px; margin-right: 10px; cursor: pointer; }
-        .box { padding: 15px; border: 1px solid #ccc; background: #fafafa; min-height: 100px; white-space: pre-wrap; }
-        .card { background: #eef6ff; border-left: 4px solid #0066cc; padding: 15px; margin-top: 10px; }
-        .error-banner { background: #ffe6e6; border-left: 4px solid #cc0000; color: #990000; padding: 12px; margin-top: 10px; }
+        body { font-family: Arial, sans-serif; max-width: 650px; margin: 30px auto; padding: 20px; background: #f4f9f4; }
+        .container { background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); }
+        h1 { color: #1b5e20; margin-top: 0; }
+        .upload-area { border: 2px dashed #81c784; padding: 25px; text-align: center; border-radius: 8px; background: #f1f8e9; margin-bottom: 20px; }
+        input[type="file"] { display: none; }
+        .btn-upload { display: inline-block; padding: 10px 20px; background: #2e7d32; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button.btn-submit { width: 100%; padding: 14px; background: #1b5e20; color: white; border: none; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button.btn-submit:disabled { background: #a5d6a7; cursor: not-allowed; }
+        #imgPreview { max-width: 100%; max-height: 220px; margin-top: 15px; border-radius: 6px; display: none; }
+        .result-card { background: #e8f5e9; border-left: 6px solid #2e7d32; padding: 20px; border-radius: 6px; margin-top: 20px; }
+        .bin-badge { display: inline-block; padding: 6px 14px; background: #1b5e20; color: #fff; border-radius: 20px; font-weight: bold; font-size: 14px; margin-bottom: 12px; text-transform: uppercase; }
+        .error-banner { background: #ffebee; border-left: 6px solid #c62828; color: #b71c1c; padding: 15px; margin-top: 20px; border-radius: 6px; }
     </style>
 </head>
 <body>
 
-    <h2>Gemini Error Resilient App</h2>
-    <textarea id="userPrompt" placeholder="Enter a theme..."></textarea>
+<div class="container">
+    <h1>♻️ EcoScan Dublin</h1>
+    <p>Upload a photo of any household item to identify its official Dublin recycling rules.</p>
 
-    <div class="btn-group">
-        <button onclick="testStreaming()">Test Streaming</button>
-        <button onclick="testStructuredJSON()">Test Structured JSON</button>
+    <!-- FILE UPLOAD CONTAINER -->
+    <div class="upload-area">
+        <label for="fileInput" class="btn-upload">📸 SELECT OR TAKE PHOTO</label>
+        <input type="file" id="fileInput" accept="image/*" onchange="handleImageSelection()">
+        <br>
+        <img id="imgPreview" src="#" alt="Image Preview">
     </div>
 
-    <h3>Output:</h3>
-    <div id="output" class="box">Ready...</div>
+    <button id="scanBtn" class="btn-submit" onclick="submitEcoScan()" disabled>ANALYZE ITEM & GET RULES</button>
 
-    <script>
-        const API_BASE = 'http://127.0.0.1:5000/api';
+    <div id="outputArea"></div>
+</div>
 
-        async function testStreaming() {
-            const prompt = document.getElementById('userPrompt').value.trim() || 'Explain quantum computing in 2 sentences.';
-            const outputDiv = document.getElementById('output');
-            outputDiv.innerText = '';
+<script>
+    let base64ImageString = "";
 
-            try {
-                const response = await fetch(`${API_BASE}/stream`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt })
-                });
+    // CONVERT FILE TO BASE64 FOR BACKEND TRANSMISSION
+    function handleImageSelection() {
+        const file = document.getElementById('fileInput').files[0];
+        if (!file) return;
 
-                if (!response.ok) {
-                    const errText = await response.text();
-                    outputDiv.innerHTML = `<div class="error-banner">⚠️ ${errText}</div>`;
-                    return;
-                }
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            base64ImageString = e.target.result;
+            const preview = document.getElementById('imgPreview');
+            preview.src = base64ImageString;
+            preview.style.display = 'block';
+            document.getElementById('scanBtn').disabled = false;
+        };
+        reader.readAsDataURL(file);
+    }
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
+    // SUBMIT IMAGE TO FLASK BACKEND ROUTE
+    async function submitEcoScan() {
+        const output = document.getElementById('outputArea');
+        const btn = document.getElementById('scanBtn');
+        btn.disabled = true;
+        output.innerHTML = '<p>🔍 ANALYZING IMAGE AGAINST DUBLIN WASTE STANDARDS...</p>';
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    outputDiv.innerText += decoder.decode(value, { stream: true });
-                }
-            } catch (err) {
-                outputDiv.innerHTML = `<div class="error-banner">⚠️ Network error: Could not reach backend server.</div>`;
+        try {
+            const response = await fetch('http://127.0.0.1:5000/api/ecoscan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: base64ImageString })
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.status === 'success') {
+                const data = result.data;
+                
+                // RENDER STRUCTURED JSON DATA INTO HTML CARD
+                output.innerHTML = `
+                    <div class="result-card">
+                        <span class="bin-badge">🗑️ ${data.bin_type}</span>
+                        <h2>${data.item_name}</h2>
+                        <p><strong>CATEGORY:</strong> ${data.item_category}</p>
+                        <h3>DISPOSAL STEPS:</h3>
+                        <ul>${data.disposal_steps.map(step => `<li>${step}</li>`).join('')}</ul>
+                        <p><strong>💡 DUBLIN LOCAL TIP:</strong> ${data.dublin_local_tip}</p>
+                    </div>
+                `;
+            } else {
+                output.innerHTML = `<div class="error-banner">⚠️ ${result.message || 'FAILED TO PROCESS IMAGE.'}</div>`;
             }
+        } catch (err) {
+            output.innerHTML = `<div class="error-banner">⚠️ COULD NOT CONNECT TO BACKEND SERVER. IS FLASK RUNNING ON PORT 5000?</div>`;
+        } finally {
+            btn.disabled = false;
         }
+    }
+</script>
 
-        async function testStructuredJSON() {
-            const prompt = document.getElementById('userPrompt').value.trim() || 'Dublin transit assistant';
-            const outputDiv = document.getElementById('output');
-            outputDiv.innerText = 'Generating project card...';
-
-            try {
-                const res = await fetch(`${API_BASE}/json`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt })
-                });
-
-                const result = await res.json();
-
-                if (res.ok && result.status === 'success') {
-                    const data = result.data;
-                    outputDiv.innerHTML = `
-                        <div class="card">
-                            <h3>Project: ${data.project_title}</h3>
-                            <p><strong>Audience:</strong> ${data.target_audience}</p>
-                            <p><strong>Difficulty:</strong> ${data.difficulty}</p>
-                            <p><strong>Key Features:</strong></p>
-                            <ul>${data.key_features.map(f => `<li>${f}</li>`).join('')}</ul>
-                        </div>
-                    `;
-                } else {
-                    // Friendly error message fallback banner
-                    outputDiv.innerHTML = `<div class="error-banner">⚠️ ${result.message || 'Something went wrong. Please try again.'}</div>`;
-                }
-            } catch (err) {
-                outputDiv.innerHTML = `<div class="error-banner">⚠️ Unable to connect to server. Is Flask running?</div>`;
-            }
-        }
-    </script>
 </body>
 </html>

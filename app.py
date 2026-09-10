@@ -1,3 +1,4 @@
+import base64
 import os
 import json
 from dotenv import load_dotenv
@@ -24,94 +25,70 @@ if not api_key:
 # Initialize Gemini Client
 client = genai.Client(api_key=api_key)
 
-class ProjectIdea(BaseModel):
-    project_title: str
-    target_audience: str
-    difficulty: str
-    key_features: list[str]
+class DublinRecyclingRule(BaseModel): #project idea schema for structured JSON response
+    item_name: str
+    item_category: str
+    bin_type: str  # E.G. "GREEN BIN (RECYCLING)", "BROWN BIN (COMPOST)", "BLACK BIN (GENERAL)", "CIVIC AMENITY / BRING BANK"
+    disposal_steps: list[str]
+    dublin_local_tip: str
 
 
-# ---------------------------------------------------------------------
-# ROUTE 1: STRUCTURED JSON (With Error Fallback)
-# ---------------------------------------------------------------------
-@app.route("/api/json", methods=["POST"])
-def generate_json():
+# 2. CREATE MULTIMODAL API ROUTE
+@app.route("/api/ecoscan", methods=["POST"])
+def ecoscan():
     data = request.get_json() or {}
-    prompt = data.get("prompt", "").strip()
+    image_b64 = data.get("image", "")
 
-    if not prompt:
-        return jsonify({
-            "status": "error",
-            "message": "Prompt cannot be empty."
-        }), 400
+    if not image_b64:
+        return jsonify({"status": "error", "message": "NO IMAGE PROVIDED. PLEASE UPLOAD AN IMAGE."}), 400
 
     try:
+        # EXTRACT MIME TYPE AND DECODE BASE64 IMAGE BYTES
+        if "," in image_b64:
+            header, image_b64_data = image_b64.split(",", 1)
+            mime_type = header.split(";")[0].split(":")[1]
+        else:
+            header = ""
+            image_b64_data = image_b64
+            mime_type = "image/jpeg"
+
+        image_bytes = base64.b64decode(image_b64_data)
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+        prompt = (
+            "ANALYZE THIS HOUSEHOLD ITEM. IDENTIFY WHAT IT IS AND PROVIDE OFFICIAL "
+            "WASTE DISPOSAL AND RECYCLING RULES ACCORDING TO DUBLIN CITY COUNCIL AND MYWASTE.IE GUIDELINES." \
+            "RETURN THE RESPONSE IN STRUCTURED JSON FORMAT WITH THE FOLLOWING FIELDS: " \
+            "item_name, item_category, bin_type, disposal_steps, dublin_local_tip." \
+            "ALSO PROVIDE A BRIEF EXPLANATION OF WHY THIS ITEM BELONGS IN THE SPECIFIED BIN TYPE."
+            "ALSO AN EMOJI COLOR OF THE BIN COLOR (GREEN, BROWN, BLACK) SHOULD BE INCLUDED IN THE RESPONSE."
+        )
+
+   
         response = client.models.generate_content(
             model=MODEL,
-            contents=f"Generate a hackathon project idea based on: {prompt}",
+            contents=[image_part, prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=ProjectIdea,
-                temperature=0.2,
+                response_schema=DublinRecyclingRule,
+                temperature=0.1,
             ),
         )
-        
+
         parsed_data = json.loads(response.text)
         return jsonify({"status": "success", "data": parsed_data})
 
     except APIError as e:
-        # Catches Google API specific errors (Invalid Key, Quota Exceeded, Rate Limit)
-        print(f"\n[GEMINI API ERROR]: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "AI service is currently unavailable or rate limited. Please check your API key and try again."
-        }), 502
+        print(f"[GEMINI API ERROR]: {e}")
+        return jsonify({"status": "error", "message": "GEMINI API FAILURE OR RATE LIMIT EXCEEDED."}), 502
 
     except json.JSONDecodeError:
-        # Fallback if Gemini output failed to parse into expected JSON
-        print("\n[JSON PARSE ERROR]: Gemini returned malformed JSON.")
-        return jsonify({
-            "status": "error",
-            "message": "Failed to parse structured response. Please retry."
-        }), 500
+        print("[PARSE ERROR]: INVALID JSON RETURNED FROM MODEL.")
+        return jsonify({"status": "error", "message": "FAILED TO PARSE STRUCTURED RECYCLING DATA."}), 500
 
     except Exception as e:
-        # Catch-all for network issues or unexpected backend errors
-        print(f"\n[UNEXPECTED ERROR]: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "Something went wrong on our end. Please try again."
-        }), 500
-
-
-# ---------------------------------------------------------------------
-# ROUTE 2: REAL-TIME STREAMING (With Stream Failure Fallback)
-# ---------------------------------------------------------------------
-@app.route("/api/stream", methods=["POST"])
-def generate_stream():
-    data = request.get_json() or {}
-    prompt = data.get("prompt", "").strip()
-
-    if not prompt:
-        return Response("Error: Prompt cannot be empty.", status=400, mimetype="text/plain")
-
-    def generate_chunks():
-        try:
-            response_stream = client.models.generate_content_stream(
-                model=MODEL,
-                contents=prompt
-            )
-            for chunk in response_stream:
-                if chunk.text:
-                    yield chunk.text
-        except APIError as e:
-            print(f"\n[STREAMING API ERROR]: {e}")
-            yield "\n\n⚠️ [Error: API service failed or key is invalid. Please try again.]"
-        except Exception as e:
-            print(f"\n[STREAMING UNEXPECTED ERROR]: {e}")
-            yield "\n\n⚠️ [Error: Connection interrupted. Please try again.]"
-
-    return Response(stream_with_context(generate_chunks()), mimetype="text/plain")
+        print(f"[SERVER ERROR]: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":
