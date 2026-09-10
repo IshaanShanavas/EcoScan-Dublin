@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini Error Resilient Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 700px; margin: 30px auto; padding: 20px; }
+        textarea { width: 100%; height: 80px; margin-bottom: 10px; padding: 10px; box-sizing: border-box; }
+        .btn-group { margin-bottom: 20px; }
+        button { padding: 10px 18px; font-size: 15px; margin-right: 10px; cursor: pointer; }
+        .box { padding: 15px; border: 1px solid #ccc; background: #fafafa; min-height: 100px; white-space: pre-wrap; }
+        .card { background: #eef6ff; border-left: 4px solid #0066cc; padding: 15px; margin-top: 10px; }
+        .error-banner { background: #ffe6e6; border-left: 4px solid #cc0000; color: #990000; padding: 12px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>Gemini Error Resilient App</h2>
+    <textarea id="userPrompt" placeholder="Enter a theme..."></textarea>
+
+    <div class="btn-group">
+        <button onclick="testStreaming()">Test Streaming</button>
+        <button onclick="testStructuredJSON()">Test Structured JSON</button>
+    </div>
+
+    <h3>Output:</h3>
+    <div id="output" class="box">Ready...</div>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:5000/api';
+
+        async function testStreaming() {
+            const prompt = document.getElementById('userPrompt').value.trim() || 'Explain quantum computing in 2 sentences.';
+            const outputDiv = document.getElementById('output');
+            outputDiv.innerText = '';
+
+            try {
+                const response = await fetch(`${API_BASE}/stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt })
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    outputDiv.innerHTML = `<div class="error-banner">⚠️ ${errText}</div>`;
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    outputDiv.innerText += decoder.decode(value, { stream: true });
+                }
+            } catch (err) {
+                outputDiv.innerHTML = `<div class="error-banner">⚠️ Network error: Could not reach backend server.</div>`;
+            }
+        }
+
+        async function testStructuredJSON() {
+            const prompt = document.getElementById('userPrompt').value.trim() || 'Dublin transit assistant';
+            const outputDiv = document.getElementById('output');
+            outputDiv.innerText = 'Generating project card...';
+
+            try {
+                const res = await fetch(`${API_BASE}/json`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt })
+                });
+
+                const result = await res.json();
+
+                if (res.ok && result.status === 'success') {
+                    const data = result.data;
+                    outputDiv.innerHTML = `
+                        <div class="card">
+                            <h3>Project: ${data.project_title}</h3>
+                            <p><strong>Audience:</strong> ${data.target_audience}</p>
+                            <p><strong>Difficulty:</strong> ${data.difficulty}</p>
+                            <p><strong>Key Features:</strong></p>
+                            <ul>${data.key_features.map(f => `<li>${f}</li>`).join('')}</ul>
+                        </div>
+                    `;
+                } else {
+                    // Friendly error message fallback banner
+                    outputDiv.innerHTML = `<div class="error-banner">⚠️ ${result.message || 'Something went wrong. Please try again.'}</div>`;
+                }
+            } catch (err) {
+                outputDiv.innerHTML = `<div class="error-banner">⚠️ Unable to connect to server. Is Flask running?</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
